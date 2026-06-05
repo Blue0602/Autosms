@@ -1,31 +1,28 @@
 # ============================================================
-# HỆ THỐNG XỬ LÝ LEAD ZALO TỰ ĐỘNG - GIAI ĐOẠN 1: CHỈ TEXT
-# Tác dụng:
-# - Upload file Excel khách hàng
-# - Lọc và chuẩn hóa SĐT
-# - Hiển thị từng khách hàng dạng flashcard
-# - Tự sinh nội dung nhắn Zalo bằng f-string
-# - Chừa sẵn vị trí nâng cấp tạo ảnh Voucher bằng Pillow
+# HỆ THỐNG QUẢN LÝ VÀ XỬ LÝ LEAD ZALO B2A CHO VNPT
+# Giai đoạn 1: Xử lý Text + Quản lý trạng thái + Xuất báo cáo Excel
 # ============================================================
 
 import re
+from io import BytesIO
+
 import pandas as pd
 import streamlit as st
 
 
 # ============================================================
-# 1. CẤU HÌNH GIAO DIỆN STREAMLIT
+# 1. CẤU HÌNH TRANG
 # ============================================================
 
 st.set_page_config(
-    page_title="Xử lý Lead Zalo VNPT",
+    page_title="Lead Zalo B2A VNPT",
     page_icon="📲",
     layout="wide"
 )
 
 
 # ============================================================
-# 2. CSS NHẸ CHO GIAO DIỆN ĐẸP HƠN
+# 2. CSS GIAO DIỆN
 # ============================================================
 
 st.markdown(
@@ -35,7 +32,7 @@ st.markdown(
             font-size: 32px;
             font-weight: 800;
             color: #005baa;
-            margin-bottom: 6px;
+            margin-bottom: 4px;
         }
 
         .sub-title {
@@ -45,10 +42,10 @@ st.markdown(
         }
 
         .customer-card {
-            padding: 22px;
+            padding: 24px;
             border-radius: 18px;
-            background: linear-gradient(135deg, #f5fbff, #ffffff);
-            border: 1px solid #d7ecff;
+            background: linear-gradient(135deg, #f3f9ff, #ffffff);
+            border: 1px solid #d8ecff;
             box-shadow: 0px 4px 18px rgba(0, 91, 170, 0.08);
             margin-bottom: 18px;
         }
@@ -57,31 +54,52 @@ st.markdown(
             font-size: 24px;
             font-weight: 800;
             color: #003b73;
-            margin-bottom: 10px;
+            margin-bottom: 12px;
         }
 
         .info-line {
             font-size: 16px;
-            margin-bottom: 6px;
             color: #333;
+            margin-bottom: 8px;
         }
 
-        .success-box {
-            padding: 12px 16px;
-            border-radius: 12px;
+        .status-done {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 999px;
             background-color: #e9f8ef;
-            border: 1px solid #b7ebc6;
             color: #176b36;
-            font-weight: 600;
+            border: 1px solid #b7ebc6;
+            font-weight: 700;
         }
 
-        .warning-box {
-            padding: 12px 16px;
-            border-radius: 12px;
+        .status-pending {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 999px;
             background-color: #fff8e6;
-            border: 1px solid #ffe0a3;
             color: #8a5a00;
-            font-weight: 600;
+            border: 1px solid #ffe0a3;
+            font-weight: 700;
+        }
+
+        .metric-box {
+            padding: 16px;
+            border-radius: 14px;
+            background-color: #f7fbff;
+            border: 1px solid #dceeff;
+            text-align: center;
+        }
+
+        .metric-number {
+            font-size: 26px;
+            font-weight: 800;
+            color: #005baa;
+        }
+
+        .metric-label {
+            font-size: 14px;
+            color: #555;
         }
     </style>
     """,
@@ -95,35 +113,42 @@ st.markdown(
 
 def chuan_hoa_sdt(value):
     """
-    Chuẩn hóa số điện thoại từ Excel.
+    Chuẩn hóa số điện thoại.
 
-    Mục tiêu:
-    - Chuyển số điện thoại về chuỗi.
-    - Bỏ phần .0 nếu Excel đọc thành dạng float.
+    Yêu cầu:
+    - Không xóa dòng nếu trống SĐT.
+    - Nếu trống thì trả về "Chưa có SĐT".
+    - Chuyển về chuỗi.
+    - Bỏ lỗi .0 do Excel đọc dạng số.
     - Chỉ giữ lại chữ số.
-    - Nếu thiếu số 0 ở đầu thì tự động thêm 0.
+    - Nếu thiếu số 0 đầu thì tự thêm.
     """
 
     if pd.isna(value):
-        return ""
+        return "Chưa có SĐT"
 
     sdt = str(value).strip()
 
-    # Trường hợp Excel đọc số thành 933599234.0
+    if sdt == "" or sdt.lower() in ["nan", "none", "null"]:
+        return "Chưa có SĐT"
+
+    # Trường hợp Excel đọc thành 933599234.0
     if sdt.endswith(".0"):
         sdt = sdt[:-2]
 
-    # Chỉ giữ lại chữ số, bỏ khoảng trắng, dấu chấm, dấu gạch...
+    # Chỉ giữ lại chữ số
     sdt = re.sub(r"\D", "", sdt)
 
-    # Nếu số bắt đầu bằng mã quốc gia 84 thì đổi về 0
+    if sdt == "":
+        return "Chưa có SĐT"
+
+    # Nếu bắt đầu bằng 84 thì chuyển về 0
     # Ví dụ: 84933599234 -> 0933599234
     if sdt.startswith("84") and len(sdt) >= 10:
         sdt = "0" + sdt[2:]
 
-    # Nếu thiếu số 0 đầu thì thêm vào
-    # Ví dụ: 933599234 -> 0933599234
-    if sdt and not sdt.startswith("0"):
+    # Nếu thiếu số 0 ở đầu thì thêm vào
+    if not sdt.startswith("0"):
         sdt = "0" + sdt
 
     return sdt
@@ -138,8 +163,8 @@ def trich_xuat_khu_vuc(dia_chi):
     Trích xuất khu vực từ địa chỉ.
 
     Quy tắc:
-    - Lấy phần chữ nằm giữa dấu phẩy đầu tiên và dấu phẩy thứ hai.
-    - Nếu lỗi hoặc không đủ dấu phẩy thì mặc định là "Long Thành".
+    - Lấy phần nằm giữa dấu phẩy thứ nhất và dấu phẩy thứ hai.
+    - Nếu lỗi thì mặc định là "Long Thành".
 
     Ví dụ:
     "Ấp 1, Xã Phước Thái, Huyện Long Thành, Đồng Nai"
@@ -150,7 +175,12 @@ def trich_xuat_khu_vuc(dia_chi):
         if pd.isna(dia_chi):
             return "Long Thành"
 
-        parts = str(dia_chi).split(",")
+        dia_chi = str(dia_chi).strip()
+
+        if dia_chi == "":
+            return "Long Thành"
+
+        parts = dia_chi.split(",")
 
         if len(parts) >= 3:
             khu_vuc = parts[1].strip()
@@ -163,47 +193,56 @@ def trich_xuat_khu_vuc(dia_chi):
 
 
 # ============================================================
-# 5. HÀM ĐỌC VÀ LÀM SẠCH FILE EXCEL
+# 5. HÀM ĐỌC VÀ XỬ LÝ FILE EXCEL
 # ============================================================
 
-def doc_va_lam_sach_excel(uploaded_file):
+def doc_file_excel(file_input):
     """
-    Đọc file Excel và trả về DataFrame đã làm sạch.
+    Đọc file Excel và xử lý dữ liệu.
 
-    Các cột bắt buộc:
+    Cột yêu cầu:
     - Tên KH (*)
     - Địa chỉ (*)
     - Điện thoại (*)
+
+    Lưu ý quan trọng:
+    - Không xóa bất kỳ dòng nào.
+    - Dòng trống SĐT sẽ được giữ lại và ghi là "Chưa có SĐT".
+    - Nếu chưa có cột "Trạng thái", hệ thống tự tạo.
     """
 
     required_columns = ["Tên KH (*)", "Địa chỉ (*)", "Điện thoại (*)"]
 
-    df = pd.read_excel(uploaded_file)
+    df = pd.read_excel(file_input)
 
-    # Kiểm tra thiếu cột
+    # Kiểm tra cột bắt buộc
     missing_columns = [col for col in required_columns if col not in df.columns]
 
     if missing_columns:
         raise ValueError(
-            "File Excel đang thiếu các cột bắt buộc: "
+            "File Excel đang thiếu cột bắt buộc: "
             + ", ".join(missing_columns)
         )
 
-    # Chỉ lấy đúng các cột cần dùng
-    df = df[required_columns].copy()
-
-    # Bỏ dòng trống số điện thoại
-    df = df.dropna(subset=["Điện thoại (*)"])
-
-    # Chuẩn hóa dữ liệu
-    df["Tên KH (*)"] = df["Tên KH (*)"].fillna("Khách hàng").astype(str).str.strip()
+    # Đảm bảo các cột quan trọng không bị NaN
+    df["Tên KH (*)"] = df["Tên KH (*)"].fillna("Khách hàng chưa có tên").astype(str).str.strip()
     df["Địa chỉ (*)"] = df["Địa chỉ (*)"].fillna("").astype(str).str.strip()
+
+    # Chuẩn hóa SĐT nhưng KHÔNG xóa dòng
     df["Điện thoại (*)"] = df["Điện thoại (*)"].apply(chuan_hoa_sdt)
 
-    # Bỏ những dòng sau khi chuẩn hóa mà SĐT vẫn rỗng
-    df = df[df["Điện thoại (*)"] != ""]
+    # Tạo cột trạng thái nếu chưa có
+    if "Trạng thái" not in df.columns:
+        df["Trạng thái"] = "Chưa gửi"
 
-    # Reset index để chạy flashcard từ 0, 1, 2...
+    # Nếu trạng thái bị trống thì điền mặc định
+    df["Trạng thái"] = df["Trạng thái"].fillna("Chưa gửi").astype(str).str.strip()
+    df.loc[df["Trạng thái"] == "", "Trạng thái"] = "Chưa gửi"
+
+    # Tạo cột khu vực để tiện báo cáo
+    df["Khu vực tự trích xuất"] = df["Địa chỉ (*)"].apply(trich_xuat_khu_vuc)
+
+    # Giữ nguyên số dòng, chỉ reset lại index cho dễ chạy flashcard
     df = df.reset_index(drop=True)
 
     return df
@@ -217,9 +256,9 @@ def tao_tin_nhan_zalo(ten_kh, khu_vuc):
     """
     Tạo nội dung tin nhắn Zalo tự động.
 
-    BẮT BUỘC dùng f-string:
+    Bắt buộc dùng f-string để:
     - {ten_kh} thay đổi theo từng khách hàng.
-    - {khu_vuc} thay đổi theo địa chỉ từng khách hàng.
+    - {khu_vuc} thay đổi theo từng địa chỉ.
     """
 
     tin_nhan = f"""🏢 [VNPT ĐỒNG NAI] HỖ TRỢ CHUYỂN ĐỔI SỐ HỘ KINH DOANH
@@ -233,40 +272,90 @@ Nhằm giúp cơ sở mình tuân thủ kịp thời quy định của Cơ quan 
 🔹 Phần mềm Kế toán (SME Accounting)
 🔹 Internet Cáp quang (FiberVNN)
 
-🎁 Đặc biệt, VNPT đang có chính sách ưu đãi cước phí riêng cho các cơ sở đăng ký Combo tại khu vực nhà mình. Anh/chị xem qua, nếu cần hỗ trợ cứ nhắn hoặc nháy máy, em Thuận sẽ gọi lại ngay ạ!"""
+🎁 Đặc biệt, VNPT đang có chính sách ưu đãi cước phí riêng cho các cơ sở đăng ký Combo tại khu vực nhà mình. 
+Số điện thoại hỗ trợ: 0837892579. Anh/chị xem qua, nếu cần tư vấn cứ nhắn hoặc nháy máy, em Thuận sẽ gọi lại ngay ạ! Trân trọng!"""
 
     return tin_nhan
 
 
 # ============================================================
-# 7. 🌟 [TƯƠNG LAI - TÍNH NĂNG TẠO ẢNH VOUCHER SẼ ĐẶT Ở ĐÂY]
+# 7. HÀM GHI NHẬN TRẠNG THÁI
+# ============================================================
+
+def ghi_nhan_da_gui_zalo():
+    """
+    Khi bấm nút [Đã nhắn Zalo ➡️]:
+    - Cập nhật cột "Trạng thái" của khách hiện tại thành "Đã gửi Zalo".
+    - Sau đó tự chuyển sang khách hàng tiếp theo nếu còn.
+    """
+
+    current_index = st.session_state.current_index
+
+    if "df_leads" in st.session_state:
+        st.session_state.df_leads.loc[current_index, "Trạng thái"] = "Đã gửi Zalo"
+
+        tong_so_khach = len(st.session_state.df_leads)
+
+        if current_index < tong_so_khach - 1:
+            st.session_state.current_index += 1
+
+
+def quay_lai_khach_truoc():
+    """
+    Chuyển về khách hàng trước đó.
+    """
+
+    if st.session_state.current_index > 0:
+        st.session_state.current_index -= 1
+
+
+# ============================================================
+# 8. HÀM XUẤT EXCEL
+# ============================================================
+
+def tao_file_excel_download(df):
+    """
+    Tạo file Excel trong bộ nhớ để Streamlit tải xuống.
+    """
+
+    output = BytesIO()
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Bao_cao_Lead_Zalo")
+
+    output.seek(0)
+
+    return output
+
+
+# ============================================================
+# 9. 🌟 [TƯƠNG LAI - TÍNH NĂNG TẠO ẢNH VOUCHER SẼ ĐẶT Ở ĐÂY]
 # ============================================================
 
 def tao_anh_voucher_tuong_lai(ten_kh, khu_vuc, sdt):
     """
     🌟 HÀM DỰ PHÒNG CHO GIAI ĐOẠN 2
 
-    Sau này khi bạn muốn sinh ảnh Voucher bằng Pillow,
-    hãy viết code tạo ảnh trong hàm này.
+    Sau này khi cần tự động sinh ảnh Voucher bằng Pillow,
+    hãy viết code vào hàm này.
 
-    Gợi ý nâng cấp sau:
+    Gợi ý nâng cấp:
     - from PIL import Image, ImageDraw, ImageFont
-    - Mở template voucher PNG/JPG
-    - Ghi tên khách hàng lên ảnh
-    - Ghi khu vực
-    - Ghi mã ưu đãi
-    - Xuất ảnh thành file PNG để tải xuống
-
-    Hiện tại Giai đoạn 1 chỉ xử lý TEXT nên hàm này chưa chạy.
+    - Mở ảnh nền Voucher.
+    - Ghi tên khách hàng.
+    - Ghi khu vực.
+    - Ghi số điện thoại.
+    - Sinh mã ưu đãi riêng.
+    - Xuất file PNG/JPG.
     """
 
     # 🌟 [TƯƠNG LAI - IMPORT PILLOW Ở ĐÂY]
     # from PIL import Image, ImageDraw, ImageFont
 
-    # 🌟 [TƯƠNG LAI - MỞ FILE TEMPLATE VOUCHER Ở ĐÂY]
+    # 🌟 [TƯƠNG LAI - MỞ TEMPLATE ẢNH VOUCHER Ở ĐÂY]
     # image = Image.open("voucher_template.png")
 
-    # 🌟 [TƯƠNG LAI - VẼ TÊN KHÁCH HÀNG / KHU VỰC / SĐT LÊN ẢNH Ở ĐÂY]
+    # 🌟 [TƯƠNG LAI - VẼ TEXT LÊN ẢNH Ở ĐÂY]
     # draw = ImageDraw.Draw(image)
 
     # 🌟 [TƯƠNG LAI - LƯU ẢNH VOUCHER Ở ĐÂY]
@@ -276,162 +365,216 @@ def tao_anh_voucher_tuong_lai(ten_kh, khu_vuc, sdt):
 
 
 # ============================================================
-# 8. KHỞI TẠO SESSION STATE
+# 10. KHỞI TẠO SESSION STATE
 # ============================================================
 
 if "current_index" not in st.session_state:
     st.session_state.current_index = 0
 
-if "uploaded_file_name" not in st.session_state:
-    st.session_state.uploaded_file_name = None
+if "df_leads" not in st.session_state:
+    st.session_state.df_leads = None
+
+if "file_name" not in st.session_state:
+    st.session_state.file_name = None
 
 
 # ============================================================
-# 9. HÀM ĐIỀU HƯỚNG FLASHCARD
+# 11. GIAO DIỆN CHÍNH
 # ============================================================
 
-def di_lui():
-    """Chuyển về khách hàng trước đó."""
-    if st.session_state.current_index > 0:
-        st.session_state.current_index -= 1
-
-
-def di_toi(tong_so_khach):
-    """Chuyển sang khách hàng tiếp theo."""
-    if st.session_state.current_index < tong_so_khach - 1:
-        st.session_state.current_index += 1
-
-
-# ============================================================
-# 10. GIAO DIỆN CHÍNH
-# ============================================================
-
-st.markdown('<div class="main-title">📲 Hệ thống Xử lý Lead Zalo Tự động</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="sub-title">Giai đoạn 1: Upload Excel → Chuẩn hóa SĐT → Sinh tin nhắn Zalo tự động cho từng khách hàng.</div>',
+    '<div class="main-title">📲 Hệ thống Quản lý và Xử lý Lead Zalo B2A cho VNPT</div>',
     unsafe_allow_html=True
 )
 
-uploaded_file = st.file_uploader(
-    "📁 Tải file Excel danh sách khách hàng",
-    type=["xls", "xlsx"],
-    help="File cần có 3 cột: Tên KH (*), Địa chỉ (*), Điện thoại (*)"
+st.markdown(
+    '<div class="sub-title">Quản lý danh sách Hộ Kinh Doanh, nhắn Zalo nhanh, cập nhật trạng thái và xuất báo cáo cuối ngày.</div>',
+    unsafe_allow_html=True
 )
 
-if uploaded_file is None:
-    st.info("Bạn hãy tải file Excel lên để bắt đầu xử lý lead Zalo.")
-    st.stop()
 
+# ============================================================
+# 12. KHU VỰC TẢI FILE
+# ============================================================
 
-# Reset current_index nếu người dùng upload file mới
-if st.session_state.uploaded_file_name != uploaded_file.name:
-    st.session_state.uploaded_file_name = uploaded_file.name
-    st.session_state.current_index = 0
+st.sidebar.header("📁 Dữ liệu đầu vào")
+
+uploaded_file = st.sidebar.file_uploader(
+    "Tải file Excel",
+    type=["xls", "xlsx"],
+    help="File mẫu: report-1780634516013.xls"
+)
+
+st.sidebar.caption("File cần có các cột: Tên KH (*), Địa chỉ (*), Điện thoại (*)")
 
 
 # ============================================================
-# 11. ĐỌC FILE VÀ XỬ LÝ LỖI
+# 13. ĐỌC FILE TỪ UPLOAD HOẶC FILE CÓ SẴN
 # ============================================================
 
-try:
-    df = doc_va_lam_sach_excel(uploaded_file)
+if uploaded_file is not None:
+    try:
+        # Nếu upload file mới thì đọc lại và reset về khách đầu tiên
+        if st.session_state.file_name != uploaded_file.name:
+            st.session_state.df_leads = doc_file_excel(uploaded_file)
+            st.session_state.current_index = 0
+            st.session_state.file_name = uploaded_file.name
 
-except Exception as e:
-    st.error("Không thể đọc hoặc xử lý file Excel.")
-    st.warning(str(e))
+    except Exception as e:
+        st.error("Không thể đọc file Excel.")
+        st.warning(str(e))
+        st.stop()
+
+else:
+    st.info("Bạn hãy tải file `report-1780634516013.xls` lên để bắt đầu.")
     st.stop()
 
 
-if df.empty:
-    st.error("File Excel không có khách hàng hợp lệ sau khi lọc số điện thoại.")
+df = st.session_state.df_leads
+
+if df is None or df.empty:
+    st.error("Không có dữ liệu khách hàng để xử lý.")
     st.stop()
 
+
+# ============================================================
+# 14. ĐẢM BẢO INDEX KHÔNG BỊ VƯỢT GIỚI HẠN
+# ============================================================
 
 tong_so_khach = len(df)
-
-# Đảm bảo current_index không vượt quá số dòng hiện có
-if st.session_state.current_index >= tong_so_khach:
-    st.session_state.current_index = tong_so_khach - 1
 
 if st.session_state.current_index < 0:
     st.session_state.current_index = 0
 
+if st.session_state.current_index >= tong_so_khach:
+    st.session_state.current_index = tong_so_khach - 1
 
-# ============================================================
-# 12. LẤY KHÁCH HÀNG HIỆN TẠI
-# ============================================================
 
 current_index = st.session_state.current_index
 khach_hang = df.iloc[current_index]
 
+
+# ============================================================
+# 15. LẤY THÔNG TIN KHÁCH HÀNG HIỆN TẠI
+# ============================================================
+
 ten_kh = khach_hang["Tên KH (*)"]
 dia_chi = khach_hang["Địa chỉ (*)"]
 sdt = khach_hang["Điện thoại (*)"]
-khu_vuc = trich_xuat_khu_vuc(dia_chi)
+khu_vuc = khach_hang["Khu vực tự trích xuất"]
+trang_thai = khach_hang["Trạng thái"]
 
-# Tạo tin nhắn bằng f-string
-tin_nhan = tao_tin_nhan_zalo(ten_kh=ten_kh, khu_vuc=khu_vuc)
+tin_nhan = tao_tin_nhan_zalo(
+    ten_kh=ten_kh,
+    khu_vuc=khu_vuc
+)
 
 
 # ============================================================
-# 13. HIỂN THỊ THẺ THÔNG TIN KHÁCH HÀNG
+# 16. THỐNG KÊ NHANH
 # ============================================================
 
-st.markdown(
-    f"""
-    <div class="customer-card">
-        <div class="customer-name">👤 Khách hàng {current_index + 1} / {tong_so_khach}: {ten_kh}</div>
-        <div class="info-line"><b>📍 Khu vực tự trích xuất:</b> {khu_vuc}</div>
-        <div class="info-line"><b>🏠 Địa chỉ gốc:</b> {dia_chi}</div>
-        <div class="info-line"><b>☎️ Số điện thoại đã chuẩn hóa:</b> {sdt}</div>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+da_gui = int((df["Trạng thái"] == "Đã gửi Zalo").sum())
+chua_gui = tong_so_khach - da_gui
 
-st.progress((current_index + 1) / tong_so_khach)
+metric_col1, metric_col2, metric_col3 = st.columns(3)
 
-st.markdown(
-    f"""
-    <div class="success-box">
-        Đã xử lý {tong_so_khach} khách hàng hợp lệ. 
-        Đang xem khách hàng số {current_index + 1}.
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+with metric_col1:
+    st.markdown(
+        f"""
+        <div class="metric-box">
+            <div class="metric-number">{tong_so_khach}</div>
+            <div class="metric-label">Tổng số lead</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+with metric_col2:
+    st.markdown(
+        f"""
+        <div class="metric-box">
+            <div class="metric-number">{da_gui}</div>
+            <div class="metric-label">Đã gửi Zalo</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+with metric_col3:
+    st.markdown(
+        f"""
+        <div class="metric-box">
+            <div class="metric-number">{chua_gui}</div>
+            <div class="metric-label">Chưa gửi</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 st.write("")
 
 
 # ============================================================
-# 14. KHU VỰC COPY 1 CHẠM
+# 17. THANH TIẾN TRÌNH
 # ============================================================
 
-col1, col2 = st.columns([1, 2])
+st.progress((current_index + 1) / tong_so_khach)
+st.caption(f"Đang xử lý khách hàng {current_index + 1} / {tong_so_khach}")
 
-with col1:
-    st.subheader("📞 Số điện thoại")
+
+# ============================================================
+# 18. FLASHCARD THÔNG TIN KHÁCH HÀNG
+# ============================================================
+
+status_class = "status-done" if trang_thai == "Đã gửi Zalo" else "status-pending"
+
+st.markdown(
+    f"""
+    <div class="customer-card">
+        <div class="customer-name">👤 Khách hàng {current_index + 1} / {tong_so_khach}: {ten_kh}</div>
+        <div class="info-line"><b>📞 Số điện thoại:</b> {sdt}</div>
+        <div class="info-line"><b>📍 Khu vực:</b> {khu_vuc}</div>
+        <div class="info-line"><b>🏠 Địa chỉ:</b> {dia_chi}</div>
+        <div class="info-line"><b>📌 Trạng thái:</b> <span class="{status_class}">{trang_thai}</span></div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# ============================================================
+# 19. KHU VỰC COPY 1 CHẠM
+# ============================================================
+
+copy_col1, copy_col2 = st.columns([1, 2])
+
+with copy_col1:
+    st.subheader("📞 Copy số điện thoại")
     st.code(sdt, language="text")
 
-with col2:
-    st.subheader("💬 Nội dung tin nhắn Zalo")
+with copy_col2:
+    st.subheader("💬 Copy nội dung tin nhắn")
     st.code(tin_nhan, language="text")
 
 
 # ============================================================
-# 15. 🌟 [TƯƠNG LAI - KHU VỰC HIỂN THỊ ẢNH VOUCHER SẼ ĐẶT Ở ĐÂY]
+# 20. 🌟 [TƯƠNG LAI - KHU VỰC HIỂN THỊ ẢNH VOUCHER SẼ ĐẶT Ở ĐÂY]
 # ============================================================
 
 st.markdown("---")
-st.markdown("### 🎁 Khu vực Voucher")
-st.caption("Giai đoạn 1 chưa sinh ảnh. Khu vực này đã được chừa sẵn để nâng cấp bằng Pillow sau này.")
+st.markdown("### 🎁 Khu vực Voucher tương lai")
+st.caption("Giai đoạn 1 chỉ xử lý tin nhắn text. Khu vực này đã chừa sẵn để sau này gắn tính năng tạo ảnh bằng Pillow.")
 
 # 🌟 [TƯƠNG LAI - GỌI HÀM TẠO ẢNH VOUCHER Ở ĐÂY]
-# voucher_path = tao_anh_voucher_tuong_lai(ten_kh=ten_kh, khu_vuc=khu_vuc, sdt=sdt)
+# voucher_path = tao_anh_voucher_tuong_lai(
+#     ten_kh=ten_kh,
+#     khu_vuc=khu_vuc,
+#     sdt=sdt
+# )
 
 # 🌟 [TƯƠNG LAI - HIỂN THỊ ẢNH VOUCHER Ở ĐÂY]
-# st.image(voucher_path, caption="Voucher ưu đãi dành cho khách hàng")
+# st.image(voucher_path, caption="Voucher ưu đãi dành riêng cho khách hàng")
 
 # 🌟 [TƯƠNG LAI - NÚT TẢI ẢNH VOUCHER Ở ĐÂY]
 # with open(voucher_path, "rb") as file:
@@ -444,7 +587,7 @@ st.caption("Giai đoạn 1 chưa sinh ảnh. Khu vực này đã được chừa
 
 
 # ============================================================
-# 16. NÚT ĐIỀU HƯỚNG
+# 21. NÚT ĐIỀU HƯỚNG
 # ============================================================
 
 st.markdown("---")
@@ -454,34 +597,47 @@ nav_col1, nav_col2, nav_col3 = st.columns([1, 1, 1])
 with nav_col1:
     st.button(
         "⬅️ Quay lại",
-        on_click=di_lui,
+        on_click=quay_lai_khach_truoc,
         disabled=current_index == 0,
         use_container_width=True
     )
 
 with nav_col2:
     st.markdown(
-        f"""
-        <div class="warning-box" style="text-align:center;">
-            {current_index + 1} / {tong_so_khach}
-        </div>
-        """,
+        f"<h4 style='text-align:center;'>Lead {current_index + 1} / {tong_so_khach}</h4>",
         unsafe_allow_html=True
     )
 
 with nav_col3:
     st.button(
-        "Bỏ qua / Đã nhắn Zalo ➡️",
-        on_click=di_toi,
-        args=(tong_so_khach,),
-        disabled=current_index == tong_so_khach - 1,
+        "Đã nhắn Zalo ➡️",
+        on_click=ghi_nhan_da_gui_zalo,
+        disabled=current_index == tong_so_khach - 1 and trang_thai == "Đã gửi Zalo",
         use_container_width=True
     )
 
 
 # ============================================================
-# 17. XEM NHANH DỮ LIỆU ĐÃ LÀM SẠCH
+# 22. TẢI BÁO CÁO EXCEL CUỐI NGÀY
 # ============================================================
 
-with st.expander("📊 Xem bảng dữ liệu đã làm sạch"):
-    st.dataframe(df, use_container_width=True)
+st.markdown("---")
+st.subheader("⬇️ Xuất báo cáo cuối ngày")
+
+excel_file = tao_file_excel_download(st.session_state.df_leads)
+
+st.download_button(
+    label="⬇️ Tải báo cáo .xlsx",
+    data=excel_file,
+    file_name="bao_cao_lead_zalo_b2a_vnpt.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    use_container_width=True
+)
+
+
+# ============================================================
+# 23. XEM BẢNG DỮ LIỆU ĐÃ CẬP NHẬT
+# ============================================================
+
+with st.expander("📊 Xem bảng dữ liệu hiện tại"):
+    st.dataframe(st.session_state.df_leads, use_container_width=True)
